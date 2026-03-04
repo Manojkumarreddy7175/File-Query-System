@@ -73,6 +73,15 @@ Question: {question}
 Answer:"""
 
 
+# Cosine distance threshold: 0 = identical, 2 = opposite.
+# Chunks with distance above this value are considered irrelevant.
+SIMILARITY_THRESHOLD = 0.75
+OUT_OF_SCOPE_MSG = (
+    "I couldn't find relevant information about that in the document. "
+    "Please ask something related to the uploaded file."
+)
+
+
 def _format_docs(docs) -> str:
     return "\n\n".join(doc.page_content for doc in docs)
 
@@ -81,7 +90,26 @@ def get_answer(vectorstore, query: str, api_key: str, model: str) -> dict:
     """
     Retrieve relevant chunks from FAISS and generate an answer with the Groq LLM.
     Returns a dict with 'result' (answer string) and 'source_documents'.
+
+    If the closest chunks are semantically too far from the query
+    (distance > SIMILARITY_THRESHOLD), returns an out-of-scope message
+    without calling the LLM at all.
     """
+    # ── Score-aware retrieval ─────────────────────────────────────────────────
+    # Returns list of (Document, float) where float is L2 distance.
+    # Lower distance = more similar. With normalised embeddings this equals
+    # (2 - 2*cosine_similarity), so distance < 0.75 ≈ cosine_sim > 0.625.
+    scored_docs = vectorstore.similarity_search_with_score(query, k=4)
+
+    # Filter to only chunks that are actually relevant
+    relevant_docs = [
+        doc for doc, score in scored_docs if score < SIMILARITY_THRESHOLD
+    ]
+
+    if not relevant_docs:
+        return {"result": OUT_OF_SCOPE_MSG, "source_documents": []}
+
+    # ── LLM answer generation ─────────────────────────────────────────────────
     llm = ChatGroq(
         api_key=api_key,
         model_name=model,
@@ -89,23 +117,17 @@ def get_answer(vectorstore, query: str, api_key: str, model: str) -> dict:
         max_tokens=1024,
     )
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
     prompt = PromptTemplate(
         template=PROMPT_TEMPLATE,
         input_variables=["context", "question"],
     )
 
-    # Retrieve source docs first so we can return them
-    source_docs = retriever.invoke(query)
-
     chain = (
-        {"context": lambda _: _format_docs(source_docs), "question": RunnablePassthrough()}
+        {"context": lambda _: _format_docs(relevant_docs), "question": RunnablePassthrough()}
         | prompt
         | llm
         | StrOutputParser()
     )
 
     answer = chain.invoke(query)
-
-    return {"result": answer, "source_documents": source_docs}
+    return {"result": answer, "source_documents": relevant_docs}
