@@ -1,0 +1,22 @@
+# RAG Pipeline dependencies
+
+# UI
+streamlit>=1.35.0
+
+# LangChain core
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-groq>=0.1.5
+
+# Vector store
+faiss-cpu>=1.8.0
+
+# Embeddings (local, no API key needed)
+sentence-transformers>=3.0.0
+
+# Document parsers
+pypdf>=4.2.0
+python-docx>=1.1.0
+
+# Utilities
+python-dotenv>=1.0.0
